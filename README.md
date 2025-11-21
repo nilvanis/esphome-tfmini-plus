@@ -1,112 +1,127 @@
-# ESPHome TFmini Plus External Component
+# TFmini Plus for ESPHome
 
-ESPHome external component to read the TFmini Plus LiDAR over UART. Handles temporary disconnects gracefully, exposes core measurements, and adds sleep/wake services for power saving. Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
+ESPHome external component adding plug-and-play support for the Benewake TFmini Plus LiDAR. Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 
 ## Features
 
-- Distance (cm), signal strength, and TFMini Plus temperature sensors.
-- Status text sensor (reports `OK`/`OFFLINE`/`SLEEPING` and [sensor error states](#status-codes-text-sensor)).
-- Offline handling:
-  - Marks sensors unavailable when no frames arrive.
-  - Retries once per 60 seconds if the device is missing at boot or drops out.
-  - Errors (checksum/timeout) are counted and logged at most once per minute.
-  - Device is declared offline only if no valid frame arrives within 1 second.
-- Optional soft reset at boot and configurable frame rate; can persist settings on the device.
-- Sleep/wake API services to stop/start measurements without rebooting (frame rate set to 0 on sleep).
+- Exposes sensors:
+  - distance
+  - signal strength
+  - device* temperature
+  - device status
+- Device control:
+  - sleep/wake via ESPHome API services
+  - frame rate setting
+  - soft reset on device bootup setting
+  - save settings on the device setting
 
-## Usage (ESPHome YAML)
+> *device: the Benewake TFMini Plus sensor
 
-```yaml
-external_components:
-  - source:
-      type: git
-      url: https://github.com/nilvanis/esphome_tfmini_plus
-    components: [tfmini_plus]
+## How to use
 
-# Highly recommended to disable DEBUG logs
-# in case of high rate update_interval
-logger:
-  level: INFO
+1) Add the external component and UART:
 
+    ```yaml
+    external_components:
+      - source: github://nilvanis/esphome_tfmini_plus@main
+        components: [tfmini_plus]
+    ```
 
-uart:
-  id: tfmmini
-  rx_pin: 26
-  tx_pin: 27
-  baud_rate: 115200
+2) Enable custom API services:
 
-api:
-  custom_services: true     # needed for sleep/wake services
+    ```yaml
+    api:
+      custom_services: true   # enables sleep/wake services
+    ```
 
-sensor:
-  - platform: tfmini_plus
-    id: tfmini
-    uart_id: tfmmini
-    update_interval: 50ms      # how often sensor is polled for result
-    frame_rate: 20             # Hz, how fast sensor polls
-    # soft_reset: false        # optional soft reset at boot
-    # save_settings: false     # persist any sent config commands
-    distance:
-      name: "TFMini Plus: Distance"
-      unit_of_measurement: "cm"
-      accuracy_decimals: 0
-    signal_strength:
-      name: "TFMini Plus: Signal"
-      filters:
-        throttle: 1s
-    temperature:
-      name: "TFMini Plus: Temperature"
-      filters:
-        throttle: 1s
-    status:
-      name: "TFMini Plus: Status"
+3) Configure UART bus, where you connected the sensor:
 
-...
-# automations
-    on_turn_on:
-      - lambda: 'id(tfmini)->wake_service();'   # trun on LiDAR
-    on_turn_off:
-      - lambda: 'id(tfmini)->sleep_service();'  # turn off LiDAR
-```
+    ```yaml
+    uart:
+      id: tfmmini
+      rx_pin: 26
+      tx_pin: 27
+      baud_rate: 115200
+    ```
 
-## Sleep/Wake Services
+4) Add the sensors:
 
-- `wake_service()`: sets frame rate to 0, marks sensors unavailable.
-- `sleep_service()`: reapplies configured frame rate and resumes polling.
+    ```yaml
+    sensor:
+      - platform: tfmini_plus
+        id: tfmini
+        uart_id: tfmmini
+        update_interval: 50ms   # how often ESPHome reads
+        frame_rate: 20          # Hz output from the sensor to UART (0 = sleep)
+        distance:
+          name: "TFMini Plus Distance"
+          unit_of_measurement: "cm"
+          accuracy_decimals: 0
+        signal_strength:
+          name: "TFMini Plus Signal"
+            filters:
+              throttle: 1s
+        temperature:
+          name: "TFMini Plus Temperature"
+            filters:
+              throttle: 60s
+        status:
+          name: "TFMini Plus Status"
+    ```
+[!TIP]
+> Pair `frame_rate` with `update_interval` for better results.\
+> e.g., 20 Hz ↔ 50 ms, because:\
+> 20Hz = 20/s\
+> 50ms = 20s (1s is 1000ms; 1000ms/50ms = 20)
 
-You can call the services from Home Assistant Developer Tools → Services or in automations:
+5) Optional wake/sleep automations (example with a LED strip):
 
-- `esphome.<node_name>_tfmini_plus_sleep`
-- `esphome.<node_name>_tfmini_plus_wake`
+    ```yaml
+    light:
+      - platform: neopixelbus
+        # ... your light config ...
+        on_turn_on:
+          - lambda: 'id(tfmini)->wake_service();'
+        on_turn_off:
+          - lambda: 'id(tfmini)->sleep_service();'
+    ```
 
-## Configuration Options
+[!TIP]
+> Services can be also called from Home Assistant via API:
+> - `esphome.<node_name>_tfmini_plus_wake`
+> - `esphome.<node_name>_tfmini_plus_sleep`
 
-- `frame_rate` (default 100): Lidar polls/sec. Allowed values {`0`, `1`, `2`, `5`, `10`, `20`, `25`, `50`, `100`, `125`, `200`, `250`, `500`, `1000`}; 0 pauses output.
-- `soft_reset` (default false): Issue `SOFT_RESET` at boot.
-- `save_settings` (default false): Send `SAVE_SETTINGS` after configuration commands.
-- `update_interval` (default 100ms): Polling interval for reading frames from the UART buffer.
-- `status` sensor: Optional; if omitted, no text_sensor dependency is linked.
+6) Performance considerations:
 
-## Behavior Notes
+    It is highly recommended to disable DEBUG logs in case of high rate `update_interval` (faster than 1000ms)
 
-- If the device is offline (no valid frame), sensors publish `unavailable` (NaN) and status shows OFFLINE.
-- Retry cadence while offline: once every 60 seconds.
-- Error handling: checksum/timeouts increment an error counter (logged at most once per minute); device moves to OFFLINE if no valid frame arrives within 1 second. Status text sensor (if configured) reports: `READY`, `SERIAL`, `HEADER`, `CHECKSUM`, `TIMEOUT`, `PASS`, `FAIL`, `I2CREAD`, `I2CWRITE`, `I2CLENGTH`, `WEAK`, `STRONG`, `FLOOD`, `MEASURE`, `OFFLINE`, `SLEEPING`, `OTHER`.
-- Measurement error codes (weak signal, saturation, ambient flood) set status to `WEAK`/`STRONG`/`FLOOD` and mark sensors unavailable for that update.
+    ```yaml
+    logger:
+      level: INFO
+    ```
 
-## Status Codes (text sensor)
+    You can also remove temperature & signal strength sensors if you don't use it.
 
-- `READY`: Normal operation; last frame valid.
-- `OFFLINE`: No valid frames; device not responding.
-- `SLEEPING`: Device put into frame-rate 0 sleep via service.
-- `HEADER`: Expected frame header (0x59 0x59) not found before timeout; no data or line noise.
-- `CHECKSUM`: Frame or reply checksum mismatch; corrupted data.
-- `TIMEOUT`: Timed out waiting for a frame or command reply.
-- `WEAK` (`WEAK_SIGNAL`): Distance -1 with low strength (≤100); target too weak/dim.
-- `STRONG` (`STRONG_SIGNAL`): Strength -1; receiver saturated.
-- `FLOOD` (`FLOOD_LIGHT`): Distance -4; ambient light saturation.
-- `PASS`: Last command reported success.
-- `FAIL`: Last command reported failure.
-- `I2CREAD` / `I2CWRITE` / `I2CLENGTH`: Reserved mirror codes from the reference lib; not expected in UART mode.
-- `MEASURE`: Reserved code; not normally used here.
-- `OTHER`: Fallback for unexpected conditions.
+## Details
+
+- Distance is reported in cm
+- Status is a text sensor that reflects device state and errors.
+- Sleep sets frame rate to 0; all sensors go unavailable during SLEEP. Wake sets configured frame rate and brings back the sensors.
+- Component checks communication with the device. In case of failure or continuus errors, sensors become unavailable. Retries every 60s.
+
+## Status sensor states
+
+- `READY`: Running normally.
+- `SLEEP`: Put to sleep via API service (frame rate 0).
+- `OFFLINE`: No valid frames for a while.
+- `CHECKSUM` / `HEADER` / `TIMEOUT`: Frame/read issues; recovers when a good frame arrives.
+- `WEAK`: Weak laser signal received.
+- `STRONG`: Saturated laser signal received.
+- `FLOOD`: Ambient light saturation.
+- `PASS` / `FAIL`: Reply from a command (config/save/reset).
+- `SERIAL`, `I2CREAD`, `I2CWRITE`, `I2CLENGTH`, `MEASURE`, `OTHER`: Rare/diagnostic codes.
+
+## Technical notes
+
+- Change filters (to reduce spam): distance publishes on ≥0.1 cm change; signal ≥1; temperature ≥0.05 °C. Unavailable publishes are forced periodically in sleep to punch through throttling filters.
+- Errors (checksum/timeout) are counted and logged (at most once per minute). The device is marked OFFLINE if no valid frame arrives within 1 second (5 seconds right after wake). Distance/signal/temperature publish NaN when unavailable.
