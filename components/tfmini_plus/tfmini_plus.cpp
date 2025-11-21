@@ -112,6 +112,8 @@ void TFMiniPlusComponent::update() {
   const uint32_t now = millis();
 
   if (this->state_ == DeviceState::SLEEPING) {
+    // Force-unavailable publish each cycle to avoid filters masking the state change.
+    this->published_unavailable_ = false;
     this->set_status_(StatusCode::SLEEPING);
     this->publish_unavailable_();
     return;
