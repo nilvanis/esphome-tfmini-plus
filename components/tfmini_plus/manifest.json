@@ -1,0 +1,13 @@
+{
+  "domain": "tfmini_plus",
+  "name": "TFMini Plus LiDAR",
+  "version": "0.1.0",
+  "documentation": "https://esphome.io/components/external_components.html",
+  "dependencies": [
+    "uart",
+    "text_sensor"
+  ],
+  "codeowners": [
+    "@nilvanis"
+  ]
+}
