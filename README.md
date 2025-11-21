@@ -72,11 +72,11 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
           name: "TFMini Plus Status"
     ```
 
-    > [!TIP]
-    > Pair `frame_rate` with `update_interval` for better results.\
-    > e.g., 20 Hz ↔ 50 ms, because:\
-    > 20Hz = 20/s\
-    > 50ms = 20s (1s is 1000ms; 1000ms/50ms = 20)
+> [!TIP]
+> Pair `frame_rate` with `update_interval` for better results.\
+> e.g., 20 Hz ↔ 50 ms, because:\
+> 20Hz = 20/s\
+> 50ms = 20s (1s is 1000ms; 1000ms/50ms = 20)
 
 5) Optional wake/sleep automations (example with a LED strip):
 
@@ -90,10 +90,10 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
           - lambda: 'id(tfmini)->sleep_service();'
     ```
 
-    > [!TIP]
-    > Services can be also called from Home Assistant via API:
-    > - `esphome.<node_name>_tfmini_plus_wake`
-    > - `esphome.<node_name>_tfmini_plus_sleep`
+> [!TIP]
+> Services can be also called from Home Assistant via API:
+> - `esphome.<node_name>_tfmini_plus_wake`
+> - `esphome.<node_name>_tfmini_plus_sleep`
 
 6) Performance considerations:
 
