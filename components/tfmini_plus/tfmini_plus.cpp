@@ -13,7 +13,7 @@ namespace {
 static const char *const TAG = "tfmini_plus";
 
 // Device always streams at 100 Hz by default. Allow a short window to find a frame.
-static const uint32_t READ_TIMEOUT_MS = 150;
+static const uint32_t READ_TIMEOUT_MS = 50;
 static const uint32_t COMMAND_TIMEOUT_MS = 1000;
 static const uint32_t OFFLINE_RETRY_INTERVAL_MS = 60000;
 
