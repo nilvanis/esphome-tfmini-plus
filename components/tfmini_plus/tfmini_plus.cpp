@@ -50,7 +50,7 @@ std::string status_to_string(StatusCode status) {
     case StatusCode::OFFLINE:
       return "OFFLINE";
     case StatusCode::SLEEPING:
-      return "SLEEPING";
+      return "SLEEP";
     case StatusCode::OTHER:
     default:
       return "OTHER";
@@ -112,6 +112,11 @@ void TFMiniPlusComponent::update() {
   const uint32_t now = millis();
 
   if (this->state_ == DeviceState::SLEEPING) {
+    // Refresh unavailable periodically to punch through throttling filters.
+    if ((now - this->last_sleep_unavailable_ms_) >= 1000) {
+      this->published_unavailable_ = false;
+      this->last_sleep_unavailable_ms_ = now;
+    }
     this->set_status_(StatusCode::SLEEPING);
     this->publish_unavailable_();
     return;
@@ -137,6 +142,7 @@ void TFMiniPlusComponent::update() {
       ESP_LOGI(TAG, "TFmini Plus came online");
       this->state_ = DeviceState::ONLINE;
       this->published_unavailable_ = false;
+      this->last_sleep_unavailable_ms_ = 0;
       this->set_status_(StatusCode::READY);
     }
     this->last_good_frame_ms_ = now;

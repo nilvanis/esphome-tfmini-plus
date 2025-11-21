@@ -140,6 +140,7 @@ class TFMiniPlusComponent : public PollingComponent, public uart::UARTDevice
   StatusCode last_published_status_{StatusCode::OTHER};
   bool has_published_status_{false};
   uint32_t wake_grace_until_{0};
+  uint32_t last_sleep_unavailable_ms_{0};
   uint32_t last_good_frame_ms_{0};
   uint32_t error_window_start_ms_{0};
   uint32_t error_count_window_{0};
