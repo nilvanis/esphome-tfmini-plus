@@ -18,7 +18,9 @@ ESPHome external component to read the TFmini Plus LiDAR over UART. Handles temp
 
 ```yaml
 external_components:
-  - source: github://nilvanis/esphome_tfmini_plus@main
+  - source:
+      type: git
+      url: https://github.com/nilvanis/esphome_tfmini_plus
     components: [tfmini_plus]
 
 uart:
