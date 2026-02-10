@@ -62,12 +62,12 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
           accuracy_decimals: 0
         signal_strength:
           name: "TFMini Plus Signal"
-            filters:
-              throttle: 1s
+          filters:
+            throttle: 1s
         temperature:
           name: "TFMini Plus Temperature"
-            filters:
-              throttle: 60s
+          filters:
+            throttle: 60s
         status:
           name: "TFMini Plus Status"
     ```
