@@ -74,7 +74,7 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 
 > [!NOTE]
 > `frame_rate` controls how often the TFmini produces measurements and thus how often below sensors update:\
-> `distance`, `signal strength`, `temperature`, `status`
+> `distance`, `signal strength`, `temperature`, `status`\
 > `update_interval` controls how often the component control data are refreshed (offline/sleep status)
 
 5) Optional wake/sleep automations (example with a LED strip):
