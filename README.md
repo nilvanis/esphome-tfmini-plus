@@ -54,7 +54,7 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
       - platform: tfmini_plus
         id: tfmini
         uart_id: tfmmini
-        update_interval: 50ms   # how often ESPHome reads
+        update_interval: 250ms  # (default) TFMini component status update interval (offline/sleep)
         frame_rate: 20          # Hz output from the sensor to UART (0 = sleep)
         distance:
           name: "TFMini Plus Distance"
@@ -72,11 +72,10 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
           name: "TFMini Plus Status"
     ```
 
-> [!TIP]
-> Pair `frame_rate` with `update_interval` for better results.\
-> e.g., 20 Hz ↔ 50 ms, because:\
-> 20Hz = 20/s\
-> 50ms = 20s (1s is 1000ms; 1000ms/50ms = 20)
+> [!NOTE]
+> `frame_rate` controls how often the TFmini produces measurements and thus how often below sensors update:\
+> `distance`, `signal strength`, `temperature`, `status`
+> `update_interval` controls how often the component control data are refreshed (offline/sleep status)
 
 5) Optional wake/sleep automations (example with a LED strip):
 
@@ -97,7 +96,7 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 
 6) Performance considerations:
 
-    It is highly recommended to disable DEBUG logs in case of high rate `update_interval` (faster than 1000ms)
+    It is highly recommended to disable DEBUG logs in case of high measurement rates or short `update_interval`
 
     ```yaml
     logger:
@@ -111,14 +110,17 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 - Distance is reported in cm
 - Status is a text sensor that reflects device state and errors.
 - Sleep sets frame rate to 0; all sensors go unavailable during SLEEP. Wake sets configured frame rate and brings back the sensors.
-- Component checks communication with the device. In case of failure or continuus errors, sensors become unavailable. Retries every 60s.
+- UART frames are consumed continuously in `loop()`, so measurement sensors update live as often as `frame_rate` is configured.
+- If the UART buffer contains backlog, the newest valid frame wins and older queued frames are skipped.
+- Component checks communication with the device. In case of failure or continuous errors, sensors become unavailable and recover automatically when a valid frame arrives.
 
 ## Status sensor states
 
 - `READY`: Running normally.
 - `SLEEP`: Put to sleep via API service (frame rate 0).
 - `OFFLINE`: No valid frames for a while.
-- `CHECKSUM` / `HEADER` / `TIMEOUT`: Frame/read issues; recovers when a good frame arrives.
+- `CHECKSUM`: Corrupted frame observed on the measurement stream; recovers when a good frame arrives.
+- `TIMEOUT`: Timed out waiting for a command reply.
 - `WEAK`: Weak laser signal received.
 - `STRONG`: Saturated laser signal received.
 - `FLOOD`: Ambient light saturation.
@@ -128,4 +130,4 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 ## Technical notes
 
 - Change filters (to reduce spam): distance publishes on ≥0.1 cm change; signal ≥1; temperature ≥0.05 °C. Unavailable publishes are forced periodically in sleep to punch through throttling filters.
-- Errors (checksum/timeout) are counted and logged (at most once per minute). The device is marked OFFLINE if no valid frame arrives within 1 second (5 seconds right after wake). Distance/signal/temperature publish NaN when unavailable.
+- Errors are counted and logged (at most once per minute). The device is marked OFFLINE if no valid frame arrives within 1 second (5 seconds right after wake). Distance/signal/temperature publish NaN when unavailable.

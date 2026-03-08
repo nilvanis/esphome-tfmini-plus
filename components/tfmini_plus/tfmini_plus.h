@@ -95,6 +95,7 @@ class TFMiniPlusComponent : public PollingComponent, public uart::UARTDevice
 
   void setup() override;
   void dump_config() override;
+  void loop() override;
   void update() override;
 
 #ifdef USE_API
@@ -103,7 +104,15 @@ class TFMiniPlusComponent : public PollingComponent, public uart::UARTDevice
 #endif
 
  protected:
-  bool read_frame_(FrameData &data);
+  enum class StreamParseResult { NONE, FRAME, CHECKSUM };
+
+  bool consume_uart_(FrameData &latest_data, StatusCode &last_error_status);
+  StreamParseResult process_byte_(uint8_t byte, FrameData &data);
+  void decode_frame_(const std::array<uint8_t, TFMP_FRAME_SIZE> &frame, FrameData &data);
+  void reset_parser_();
+  void recover_parser_from_invalid_frame_();
+  void discard_uart_input_();
+
   bool send_command_(uint32_t command, uint32_t param = 0);
   bool apply_frame_rate_(uint16_t frame_rate);
   void record_error_(StatusCode status, uint32_t now);
@@ -125,6 +134,8 @@ class TFMiniPlusComponent : public PollingComponent, public uart::UARTDevice
   float last_distance_{NAN};
   float last_signal_{NAN};
   float last_temperature_{NAN};
+  std::array<uint8_t, TFMP_FRAME_SIZE> parser_buffer_{};
+  uint8_t parser_pos_{0};
   bool have_distance_{false};
   bool have_signal_{false};
   bool have_temperature_{false};
@@ -134,7 +145,6 @@ class TFMiniPlusComponent : public PollingComponent, public uart::UARTDevice
   bool save_settings_{false};
 
   DeviceState state_{DeviceState::INIT};
-  uint32_t last_retry_ms_{0};
   bool published_unavailable_{false};
   StatusCode last_status_{StatusCode::OFFLINE};
   StatusCode last_published_status_{StatusCode::OTHER};

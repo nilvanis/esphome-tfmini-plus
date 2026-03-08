@@ -1,1 +1,12 @@
-.venv
+.venv/
+.local/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# ESPHome / PlatformIO local build outputs
+.esphome/
+build/
+.pioenvs/
+.piolibdeps/

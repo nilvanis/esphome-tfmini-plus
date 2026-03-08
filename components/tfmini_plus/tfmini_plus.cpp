@@ -12,10 +12,7 @@ namespace tfmini_plus {
 namespace {
 static const char *const TAG = "tfmini_plus";
 
-// Device always streams at 100 Hz by default. Allow a short window to find a frame.
-static const uint32_t READ_TIMEOUT_MS = 50;
 static const uint32_t COMMAND_TIMEOUT_MS = 1000;
-static const uint32_t OFFLINE_RETRY_INTERVAL_MS = 60000;
 
 std::string status_to_string(StatusCode status) {
   switch (status) {
@@ -108,6 +105,35 @@ void TFMiniPlusComponent::dump_config() {
   }
 }
 
+void TFMiniPlusComponent::loop() {
+  if (this->state_ == DeviceState::SLEEPING) {
+    this->discard_uart_input_();
+    return;
+  }
+
+  FrameData latest_frame{};
+  StatusCode last_error_status = StatusCode::OTHER;
+  bool got_frame = this->consume_uart_(latest_frame, last_error_status);
+
+  if (!got_frame) {
+    if (last_error_status != StatusCode::OTHER && this->state_ != DeviceState::OFFLINE) {
+      this->set_status_(last_error_status);
+    }
+    return;
+  }
+
+  if (this->state_ != DeviceState::ONLINE) {
+    ESP_LOGI(TAG, "TFmini Plus came online");
+    this->state_ = DeviceState::ONLINE;
+    this->published_unavailable_ = false;
+    this->last_sleep_unavailable_ms_ = 0;
+  }
+
+  this->wake_grace_until_ = 0;
+  this->last_good_frame_ms_ = millis();
+  this->publish_online_(latest_frame);
+}
+
 void TFMiniPlusComponent::update() {
   const uint32_t now = millis();
 
@@ -123,98 +149,130 @@ void TFMiniPlusComponent::update() {
   }
 
   if (this->state_ == DeviceState::OFFLINE) {
-    // Immediately after wake, keep retrying every cycle for a short grace period.
-    if (this->wake_grace_until_ == 0 || now > this->wake_grace_until_) {
-      if (this->last_retry_ms_ != 0 && (now - this->last_retry_ms_) < OFFLINE_RETRY_INTERVAL_MS) {
-        return;
-      }
-    }
+    this->publish_unavailable_();
   }
 
-  this->last_retry_ms_ = now;
-  FrameData data{};
-
-  bool got_frame = this->read_frame_(data);
-
-  if (got_frame) {
-    // First data after being offline
-    if (this->state_ != DeviceState::ONLINE) {
-      ESP_LOGI(TAG, "TFmini Plus came online");
-      this->state_ = DeviceState::ONLINE;
-      this->published_unavailable_ = false;
-      this->last_sleep_unavailable_ms_ = 0;
-      this->set_status_(StatusCode::READY);
-    }
-    this->last_good_frame_ms_ = now;
-    this->publish_online_(data);
-  }
-
-  // If no good frame for more than 1s, declare offline.
   const bool in_wake_grace = (this->wake_grace_until_ != 0 && now <= this->wake_grace_until_);
   const uint32_t offline_timeout_ms = in_wake_grace ? 5000 : 1000;
   if (this->last_good_frame_ms_ == 0 || (now - this->last_good_frame_ms_) > offline_timeout_ms) {
     if (this->state_ != DeviceState::OFFLINE) {
-      this->mark_offline_("No valid frame within 1s", this->last_status_);
-      // After declaring offline due to missing frames, retry scale doubles as needed.
-      this->last_retry_ms_ = now;
+      const char *reason = in_wake_grace ? "No valid frame after wake" : "No valid frame within timeout";
+      this->mark_offline_(reason);
     }
   }
 }
 
-bool TFMiniPlusComponent::read_frame_(FrameData &data) {
-  std::array<uint8_t, TFMP_FRAME_SIZE + 1> frame{};
-  const uint32_t deadline = millis() + READ_TIMEOUT_MS;
+bool TFMiniPlusComponent::consume_uart_(FrameData &latest_data, StatusCode &last_error_status) {
+  bool got_frame = false;
+  last_error_status = StatusCode::OTHER;
 
-  while (millis() < deadline) {
-    if (this->available() <= 0) {
-      delay(1);
-      continue;
-    }
-
+  while (this->available() > 0) {
     uint8_t byte;
-    if (!this->read_byte(&byte))
-      continue;
-
-    frame[TFMP_FRAME_SIZE] = byte;
-    memmove(frame.data(), frame.data() + 1, TFMP_FRAME_SIZE);
-
-    if (frame[0] != 0x59 || frame[1] != 0x59)
-      continue;
-
-    uint16_t checksum = 0;
-    for (size_t i = 0; i < (TFMP_FRAME_SIZE - 1); i++)
-      checksum += frame[i];
-
-  if (static_cast<uint8_t>(checksum) != frame[TFMP_FRAME_SIZE - 1]) {
-    ESP_LOGW(TAG, "Checksum error while reading frame");
-    this->set_status_(StatusCode::CHECKSUM);
-    this->record_error_(StatusCode::CHECKSUM, millis());
-    data.status = MeasurementStatus::CHECKSUM;
-    return false;
-  }
-
-    data.distance_cm = static_cast<int16_t>(frame[2] + (static_cast<uint16_t>(frame[3]) << 8));
-    data.strength = static_cast<int16_t>(frame[4] + (static_cast<uint16_t>(frame[5]) << 8));
-    const int16_t raw_temp = static_cast<int16_t>(frame[6] + (static_cast<uint16_t>(frame[7]) << 8));
-    data.temperature_c = (raw_temp >> 3) - 256;
-    data.status = MeasurementStatus::OK;
-
-    if (data.distance_cm == -1) {
-      data.status = MeasurementStatus::WEAK_SIGNAL;
-    } else if (data.strength == -1) {
-      data.status = MeasurementStatus::STRONG_SIGNAL;
-    } else if (data.distance_cm == -4) {
-      data.status = MeasurementStatus::FLOOD_LIGHT;
+    if (!this->read_byte(&byte)) {
+      break;
     }
 
-    return true;
+    FrameData frame{};
+    switch (this->process_byte_(byte, frame)) {
+      case StreamParseResult::FRAME:
+        latest_data = frame;
+        got_frame = true;
+        break;
+      case StreamParseResult::CHECKSUM:
+        last_error_status = StatusCode::CHECKSUM;
+        this->record_error_(StatusCode::CHECKSUM, millis());
+        break;
+      case StreamParseResult::NONE:
+        break;
+    }
   }
 
-  ESP_LOGW(TAG, "Timeout waiting for TFmini Plus frame");
-  this->set_status_(StatusCode::TIMEOUT);
-  this->record_error_(StatusCode::TIMEOUT, millis());
-  data.status = MeasurementStatus::HEADER;
-  return false;
+  return got_frame;
+}
+
+TFMiniPlusComponent::StreamParseResult TFMiniPlusComponent::process_byte_(uint8_t byte, FrameData &data) {
+  if (this->parser_pos_ == 0) {
+    if (byte == 0x59) {
+      this->parser_buffer_[0] = byte;
+      this->parser_pos_ = 1;
+    }
+    return StreamParseResult::NONE;
+  }
+
+  if (this->parser_pos_ == 1) {
+    if (byte == 0x59) {
+      this->parser_buffer_[1] = byte;
+      this->parser_pos_ = 2;
+    } else {
+      this->reset_parser_();
+    }
+    return StreamParseResult::NONE;
+  }
+
+  this->parser_buffer_[this->parser_pos_++] = byte;
+  if (this->parser_pos_ < TFMP_FRAME_SIZE) {
+    return StreamParseResult::NONE;
+  }
+
+  uint16_t checksum = 0;
+  for (size_t i = 0; i < (TFMP_FRAME_SIZE - 1); i++) {
+    checksum += this->parser_buffer_[i];
+  }
+
+  if (static_cast<uint8_t>(checksum) != this->parser_buffer_[TFMP_FRAME_SIZE - 1]) {
+    this->recover_parser_from_invalid_frame_();
+    return StreamParseResult::CHECKSUM;
+  }
+
+  this->decode_frame_(this->parser_buffer_, data);
+  this->reset_parser_();
+  return StreamParseResult::FRAME;
+}
+
+void TFMiniPlusComponent::decode_frame_(const std::array<uint8_t, TFMP_FRAME_SIZE> &frame, FrameData &data) {
+  data.distance_cm = static_cast<int16_t>(frame[2] + (static_cast<uint16_t>(frame[3]) << 8));
+  data.strength = static_cast<int16_t>(frame[4] + (static_cast<uint16_t>(frame[5]) << 8));
+  const int16_t raw_temp = static_cast<int16_t>(frame[6] + (static_cast<uint16_t>(frame[7]) << 8));
+  data.temperature_c = (raw_temp >> 3) - 256;
+  data.status = MeasurementStatus::OK;
+
+  if (data.distance_cm == -1) {
+    data.status = MeasurementStatus::WEAK_SIGNAL;
+  } else if (data.strength == -1) {
+    data.status = MeasurementStatus::STRONG_SIGNAL;
+  } else if (data.distance_cm == -4) {
+    data.status = MeasurementStatus::FLOOD_LIGHT;
+  }
+}
+
+void TFMiniPlusComponent::reset_parser_() { this->parser_pos_ = 0; }
+
+void TFMiniPlusComponent::recover_parser_from_invalid_frame_() {
+  const bool trailing_header = this->parser_buffer_[TFMP_FRAME_SIZE - 2] == 0x59 &&
+                               this->parser_buffer_[TFMP_FRAME_SIZE - 1] == 0x59;
+  const bool trailing_header_start = this->parser_buffer_[TFMP_FRAME_SIZE - 1] == 0x59;
+
+  if (trailing_header) {
+    this->parser_buffer_[0] = 0x59;
+    this->parser_buffer_[1] = 0x59;
+    this->parser_pos_ = 2;
+    return;
+  }
+
+  if (trailing_header_start) {
+    this->parser_buffer_[0] = 0x59;
+    this->parser_pos_ = 1;
+    return;
+  }
+
+  this->reset_parser_();
+}
+
+void TFMiniPlusComponent::discard_uart_input_() {
+  this->reset_parser_();
+  while (this->available() > 0) {
+    this->read();
+  }
 }
 
 bool TFMiniPlusComponent::apply_frame_rate_(uint16_t frame_rate) {
@@ -402,16 +460,10 @@ void TFMiniPlusComponent::mark_offline_(const char *reason, StatusCode status) {
   this->state_ = DeviceState::OFFLINE;
   this->set_status_(status);
   this->publish_unavailable_();
-  // Allow immediate retries during wake grace.
-  if (this->wake_grace_until_ != 0 && millis() <= this->wake_grace_until_) {
-    this->last_retry_ms_ = 0;
-  } else if (status == StatusCode::TIMEOUT) {
-    // Retry sooner after a timeout by resetting the backoff.
-    this->last_retry_ms_ = 0;
-  }
 }
 
 void TFMiniPlusComponent::flush_input_() {
+  this->reset_parser_();
   while (this->available() > 0) {
     this->read();
   }
@@ -437,8 +489,7 @@ void TFMiniPlusComponent::wake_service() {
     this->state_ = DeviceState::OFFLINE;
     this->published_unavailable_ = false;
     const uint32_t now = millis();
-    this->last_retry_ms_ = 0;  // force immediate retry
-    this->wake_grace_until_ = now + 5000;  // quick retry window after wake
+    this->wake_grace_until_ = now + 5000;
     this->set_status_(StatusCode::READY);
   } else {
     ESP_LOGW(TAG, "Wake command failed");
