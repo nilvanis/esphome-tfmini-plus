@@ -70,7 +70,7 @@ CONFIG_SCHEMA = (
             ),
         }
     )
-    .extend(cv.polling_component_schema("100ms"))
+    .extend(cv.polling_component_schema("250ms"))
     .extend(uart.UART_DEVICE_SCHEMA)
 )
 
