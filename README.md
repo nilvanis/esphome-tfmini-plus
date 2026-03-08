@@ -54,7 +54,7 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
       - platform: tfmini_plus
         id: tfmini
         uart_id: tfmmini
-        update_interval: 50ms   # how often ESPHome reads
+        update_interval: 250ms  # (default) TFMini component status update interval (offline/sleep)
         frame_rate: 20          # Hz output from the sensor to UART (0 = sleep)
         distance:
           name: "TFMini Plus Distance"
@@ -71,6 +71,11 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
         status:
           name: "TFMini Plus Status"
     ```
+
+> [!NOTE]
+> `frame_rate` controls how often the TFmini produces measurements and thus how often below sensors update:\
+> `distance`, `signal strength`, `temperature`, `status`
+> `update_interval` controls how often the component control data are refreshed (offline/sleep status)
 
 5) Optional wake/sleep automations (example with a LED strip):
 
@@ -105,6 +110,7 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 - Distance is reported in cm
 - Status is a text sensor that reflects device state and errors.
 - Sleep sets frame rate to 0; all sensors go unavailable during SLEEP. Wake sets configured frame rate and brings back the sensors.
+- UART frames are consumed continuously in `loop()`, so measurement sensors update live as often as `frame_rate` is configured.
 - If the UART buffer contains backlog, the newest valid frame wins and older queued frames are skipped.
 - Component checks communication with the device. In case of failure or continuous errors, sensors become unavailable and recover automatically when a valid frame arrives.
 
@@ -124,5 +130,4 @@ Based on [TFMini-Plus](https://github.com/budryerson/TFMini-Plus) library.
 ## Technical notes
 
 - Change filters (to reduce spam): distance publishes on ≥0.1 cm change; signal ≥1; temperature ≥0.05 °C. Unavailable publishes are forced periodically in sleep to punch through throttling filters.
-- Measurement frames are parsed without blocking in `loop()`. `update_interval` only governs housekeeping and offline detection, not UART consumption.
 - Errors are counted and logged (at most once per minute). The device is marked OFFLINE if no valid frame arrives within 1 second (5 seconds right after wake). Distance/signal/temperature publish NaN when unavailable.
